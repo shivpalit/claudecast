@@ -366,9 +366,10 @@ Always read the live files above before generating — never assume defaults.
 
 **Projects**
 ```
-{cmd} project create morning-briefing
+{cmd} project create morning-briefing    # interactive setup wizard
 {cmd} project list
 {cmd} project use morning-briefing
+{cmd} project deactivate
 {cmd} project show [NAME]
 {cmd} project set default_slides 5
 {cmd} project set default_voice en-US-GuyNeural --project morning-briefing
@@ -386,15 +387,26 @@ Always read the live files above before generating — never assume defaults.
 
 **Generation**
 ```
+# per-slide audio (N mp3s + combined.mp3)
 {cmd} generate "topic" --audio-only
-{cmd} generate report.pdf --audio-only --project morning-briefing
-{cmd} generate data.csv --audio-only --slides 8 --voice en-US-AriaNeural
-{cmd} generate - --audio-only            # read input from stdin
-{cmd} generate "topic" --audio-only --no-combine   # keep per-slide MP3s only
-{cmd} generate "topic" --audio-only --output ~/out/
+{cmd} generate notes.txt --audio-only --slides 5 --voice en-US-GuyNeural
+{cmd} generate data.csv --audio-only --project morning-briefing
+{cmd} generate - --audio-only            # read from stdin
+{cmd} generate "topic" --audio-only --no-combine
+
+# podcast (single continuous narration → one mp3)
+{cmd} generate "topic" --podcast
+{cmd} generate article.pdf --podcast --voice en-US-AriaNeural
+{cmd} generate - --podcast --output ~/out/
+
+# shared flags
+# --slides N        number of slides (audio-only)
+# --voice NAME      edge-tts voice
+# --output DIR      override output directory
+# --project NAME    override active project
 ```
 
-Full pipeline (PPTX + video) coming soon.
+PPTX + video pipeline coming soon.
 
 **Voices**
 ```
@@ -528,6 +540,7 @@ def main():
     gen_p = sub.add_parser("generate", help="generate output from input")
     gen_p.add_argument("input", help="topic string, file path, or - for stdin")
     gen_p.add_argument("--audio-only", action="store_true", help="generate audio only (no slides)")
+    gen_p.add_argument("--slides-only", action="store_true", help="generate pptx only (no audio)")
     gen_p.add_argument("--podcast", action="store_true", help="single continuous narration, one mp3")
     gen_p.add_argument("--slides", type=int, default=None, help="number of slides/sections")
     gen_p.add_argument("--voice", default=None, help="edge-tts voice name")
@@ -593,6 +606,17 @@ def main():
             )
             print(f"\ndone. output: {result['output_dir']}")
             print(f"  podcast  : {result['audio_path']}")
+        elif args.slides_only:
+            from .core import generate_slides
+            result = generate_slides(
+                args.input,
+                project=project,
+                output_base=args.output,
+                slides=args.slides,
+                model=args.model,
+            )
+            print(f"\ndone. output: {result['output_dir']}")
+            print(f"  pptx : {result['pptx_path']}")
         elif args.audio_only:
             from .core import generate_audio
             result = generate_audio(
@@ -609,7 +633,7 @@ def main():
                 print(f"  combined : {result['combined']}")
             print(f"  {len(result['audio_paths'])} audio files")
         else:
-            print("only --audio-only and --podcast are supported right now. full pipeline coming soon.")
+            print("specify --audio-only, --slides-only, or --podcast. full pipeline coming soon.")
             sys.exit(1)
 
     elif args.command == "voices":

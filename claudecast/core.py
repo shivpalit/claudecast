@@ -115,6 +115,49 @@ def generate_audio(
     return result
 
 
+def generate_slides(
+    source: str,
+    *,
+    project: str | None = None,
+    output_base: str | None = None,
+    slides: int | None = None,
+    model: str | None = None,
+    aspect: str | None = None,
+) -> dict:
+    """
+    Slides-only pipeline: input → scripts → PPTX.
+    Returns dict with keys: scripts, pptx_path, output_dir.
+    """
+    from .agents import run_script_agent
+    from .compilers.slides import generate_pptx
+
+    cfg = resolve_config(project)
+    _slides = slides or cfg.get("default_slides", 8)
+    _aspect = aspect or cfg.get("default_aspect", "16:9")
+    _base = output_base or cfg.get("output_dir", str(Path.home() / "claudecast-output"))
+
+    input_text = _read_input(source)
+    system_prompt = _build_system_prompt(project)
+
+    print(f"generating {_slides} scripts...")
+    scripts = run_script_agent(input_text, system_prompt, _slides)
+
+    out = _output_dir(_base, project)
+    pptx_path = str(out / "slides.pptx")
+
+    print("building slides...")
+    generate_pptx(scripts, pptx_path, _aspect)
+
+    result = {
+        "scripts": scripts,
+        "pptx_path": pptx_path,
+        "output_dir": str(out),
+    }
+
+    (out / "manifest.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
 def generate_podcast(
     source: str,
     *,
