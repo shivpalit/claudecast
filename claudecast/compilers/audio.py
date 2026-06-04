@@ -66,9 +66,15 @@ def combine_audio(audio_paths: list[str], output_path: str) -> str:
     list_path = Path(output_path).parent / "_concat_list.txt"
     list_path.write_text("\n".join(f"file '{p}'" for p in audio_paths))
 
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        ffmpeg_exe = "ffmpeg"
+
     result = subprocess.run(
         [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            ffmpeg_exe, "-y", "-f", "concat", "-safe", "0",
             "-i", str(list_path),
             "-c", "copy", output_path,
         ],
