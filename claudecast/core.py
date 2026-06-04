@@ -90,8 +90,8 @@ def generate_audio(
     input_text = _read_input(source)
     system_prompt = _build_system_prompt(project)
 
-    print(f"generating {_slides} scripts with {_model}...")
-    scripts = run_script_agent(input_text, system_prompt, _slides, _model)
+    print(f"generating {_slides} scripts...")
+    scripts = run_script_agent(input_text, system_prompt, _slides)
 
     out = _output_dir(_base, project)
     audio_dir = out / "audio"
