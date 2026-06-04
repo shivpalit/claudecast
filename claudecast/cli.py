@@ -132,14 +132,36 @@ def _cmd_config_set(key: str, value: str):
 # project
 # ---------------------------------------------------------------------------
 
+_PROJECT_SETUP_KEYS = [
+    ("default_slides",  "slides per deck",          int),
+    ("default_voice",   "tts voice",                str),
+    ("default_model",   "claude model",             str),
+    ("default_aspect",  "slide aspect ratio",       str),
+    ("output_dir",      "output directory",         str),
+]
+
+
 def _cmd_project_create(name: str):
     _check_init()
     if project_exists(name):
         print(f"project '{name}' already exists")
         sys.exit(1)
+
+    global_cfg = load_config()
+    print(f"\nsetting up project: {name}")
+    print("press enter to accept the default shown in brackets.\n")
+
+    overrides = {}
+    for key, label, coerce in _PROJECT_SETUP_KEYS:
+        default = global_cfg.get(key, DEFAULT_CONFIG.get(key, ""))
+        raw = input(f"  {label} [{default}]: ").strip()
+        if raw:
+            overrides[key] = coerce(raw)
+
     d = project_dir(name)
     (d / "history").mkdir(parents=True)
-    save_project_config(name, {})
+    save_project_config(name, overrides)
+
     prefs = preferences_path(name)
     prefs.write_text(
         f"# Preferences — {name}\n\n"
@@ -147,9 +169,15 @@ def _cmd_project_create(name: str):
         f"Add preferences using: claudecast train \"your instruction\" --project {name}\n\n"
         "<!-- preferences below this line -->\n"
     )
-    print(f"created project: {name}")
+
+    print(f"\ncreated project: {name}")
     print(f"  {d}")
-    print(f"run `claudecast project use {name}` to make it active.")
+    if overrides:
+        for k, v in overrides.items():
+            print(f"  {k} = {v}")
+    else:
+        print("  (using global defaults)")
+    print(f"\nrun `claudecast project use {name}` to make it active.")
 
 
 def _cmd_project_list():
