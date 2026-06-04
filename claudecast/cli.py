@@ -356,16 +356,17 @@ Always read the live files above before generating — never assume defaults.
 {cmd} train --file style_guide.md [--project NAME]
 ```
 
-**Generation (coming soon)**
+**Generation**
 ```
-{cmd} generate "topic"
-{cmd} generate report.pdf --project morning-briefing
-{cmd} generate data.csv --slides 8 --voice en-US-AriaNeural
-{cmd} generate "topic" --pptx-only
 {cmd} generate "topic" --audio-only
-{cmd} generate "topic" --video-only
-{cmd} generate outline.json --video-only
+{cmd} generate report.pdf --audio-only --project morning-briefing
+{cmd} generate data.csv --audio-only --slides 8 --voice en-US-AriaNeural
+{cmd} generate - --audio-only            # read input from stdin
+{cmd} generate "topic" --audio-only --no-combine   # keep per-slide MP3s only
+{cmd} generate "topic" --audio-only --output ~/out/
 ```
+
+Full pipeline (PPTX + video) coming soon.
 
 **Voices**
 ```
@@ -494,6 +495,17 @@ def main():
     train_p.add_argument("--edit", action="store_true")
     train_p.add_argument("--clear", action="store_true")
 
+    # generate
+    gen_p = sub.add_parser("generate", help="generate output from input")
+    gen_p.add_argument("input", help="topic string, file path, or - for stdin")
+    gen_p.add_argument("--audio-only", action="store_true", help="generate audio only (no slides)")
+    gen_p.add_argument("--slides", type=int, default=None, help="number of slides/sections")
+    gen_p.add_argument("--voice", default=None, help="edge-tts voice name")
+    gen_p.add_argument("--model", default=None, help="claude model id")
+    gen_p.add_argument("--output", default=None, help="output directory")
+    gen_p.add_argument("--project", default=None, help="project name (overrides active)")
+    gen_p.add_argument("--no-combine", action="store_true", help="skip combined.mp3")
+
     # voices
     voices_p = sub.add_parser("voices", help="list available tts voices")
     voices_p.add_argument("--lang", default=None, help="filter by locale prefix e.g. en-US")
@@ -526,6 +538,27 @@ def main():
 
     elif args.command == "train":
         _cmd_train(args.text, args.project, args.file, args.show, args.edit, args.clear)
+
+    elif args.command == "generate":
+        _check_init()
+        if not args.audio_only:
+            print("only --audio-only is supported right now. full pipeline coming soon.")
+            sys.exit(1)
+        from .core import generate_audio
+        project = args.project or load_config().get("active_project")
+        result = generate_audio(
+            args.input,
+            project=project,
+            output_base=args.output,
+            slides=args.slides,
+            voice=args.voice,
+            model=args.model,
+            combine=not args.no_combine,
+        )
+        print(f"\ndone. output: {result['output_dir']}")
+        if result.get("combined"):
+            print(f"  combined : {result['combined']}")
+        print(f"  {len(result['audio_paths'])} audio files")
 
     elif args.command == "voices":
         from .compilers.audio import list_voices
