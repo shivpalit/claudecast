@@ -31,8 +31,7 @@ from .config import (
 
 def _check_init():
     if not is_initialized():
-        print("claudecast is not initialized. Run: claudecast init")
-        sys.exit(1)
+        _cmd_init(quiet=True)
 
 
 def _print_config(cfg: dict, title: str = "config"):
@@ -47,7 +46,7 @@ def _print_config(cfg: dict, title: str = "config"):
 # init
 # ---------------------------------------------------------------------------
 
-def _cmd_init():
+def _cmd_init(quiet: bool = False):
     base = claudecast_dir()
     created = []
 
@@ -84,6 +83,9 @@ def _cmd_init():
             "Populate this by running: claudecast ingest template your_deck.pptx\n"
         )
         created.append(str(layouts))
+
+    if quiet:
+        return
 
     if created:
         for path in created:
