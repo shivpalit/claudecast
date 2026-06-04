@@ -494,8 +494,9 @@ def main():
     train_p.add_argument("--edit", action="store_true")
     train_p.add_argument("--clear", action="store_true")
 
-    # voices (stub)
-    sub.add_parser("voices", help="list available tts voices")
+    # voices
+    voices_p = sub.add_parser("voices", help="list available tts voices")
+    voices_p.add_argument("--lang", default=None, help="filter by locale prefix e.g. en-US")
 
     # install-skill
     sub.add_parser("install-skill", help="install claude code skill")
@@ -527,7 +528,15 @@ def main():
         _cmd_train(args.text, args.project, args.file, args.show, args.edit, args.clear)
 
     elif args.command == "voices":
-        print("voices command coming soon — requires edge-tts install")
+        from .compilers.audio import list_voices
+        voices = list_voices()
+        lang = getattr(args, "lang", None)
+        if lang:
+            voices = [v for v in voices if v["locale"].startswith(lang)]
+        print()
+        for v in voices:
+            print(f"  {v['name']:<40} {v['locale']:<10} {v['gender']}")
+        print(f"\n  {len(voices)} voices")
 
     elif args.command == "install-skill":
         _install_skill()
