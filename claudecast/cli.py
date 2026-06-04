@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -9,7 +8,6 @@ from pathlib import Path
 
 from . import __version__
 from .config import (
-    CLAUDECAST_DIR,
     DEFAULT_CONFIG,
     VALID_CONFIG_KEYS,
     claudecast_dir,
@@ -22,7 +20,6 @@ from .config import (
     project_exists,
     save_config,
     save_project_config,
-    template_dir,
 )
 
 # ---------------------------------------------------------------------------
@@ -46,8 +43,16 @@ def _print_config(cfg: dict, title: str = "config"):
 # init
 # ---------------------------------------------------------------------------
 
-def _cmd_init(quiet: bool = False):
+def _cmd_init(quiet: bool = False, reset: bool = False):
+    import shutil
     base = claudecast_dir()
+    if reset and base.exists():
+        confirm = input(f"delete {base} and reinitialize? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("aborted.")
+            return
+        shutil.rmtree(base)
+        print(f"removed {base}")
     created = []
 
     dirs = [
@@ -454,7 +459,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     # init
-    sub.add_parser("init", help="initialize ~/.claudecast/")
+    init_p = sub.add_parser("init", help="initialize ~/.claudecast/")
+    init_p.add_argument("--reset", action="store_true", help="wipe and reinitialize")
 
     # config
     config_p = sub.add_parser("config", help="manage global config")
@@ -497,7 +503,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "init":
-        _cmd_init()
+        _cmd_init(reset=args.reset)
 
     elif args.command == "config":
         if args.config_cmd == "show":
