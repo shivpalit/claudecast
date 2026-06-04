@@ -539,6 +539,7 @@ def main():
     # generate
     gen_p = sub.add_parser("generate", help="generate output from input")
     gen_p.add_argument("input", help="topic string, file path, or - for stdin")
+    gen_p.add_argument("--full", action="store_true", help="full pipeline: pptx + audio + video")
     gen_p.add_argument("--audio-only", action="store_true", help="generate audio only (no slides)")
     gen_p.add_argument("--slides-only", action="store_true", help="generate pptx only (no audio)")
     gen_p.add_argument("--podcast", action="store_true", help="single continuous narration, one mp3")
@@ -606,6 +607,20 @@ def main():
             )
             print(f"\ndone. output: {result['output_dir']}")
             print(f"  podcast  : {result['audio_path']}")
+        if args.full:
+            from .core import generate_full
+            result = generate_full(
+                args.input,
+                project=project,
+                output_base=args.output,
+                slides=args.slides,
+                voice=args.voice,
+            )
+            print(f"\ndone. output: {result['output_dir']}")
+            print(f"  pptx  : {result['pptx_path']}")
+            if result.get("video_path"):
+                print(f"  video : {result['video_path']}")
+            print(f"  {len(result['audio_paths'])} audio files")
         elif args.slides_only:
             from .core import generate_slides
             result = generate_slides(
@@ -632,8 +647,8 @@ def main():
             if result.get("combined"):
                 print(f"  combined : {result['combined']}")
             print(f"  {len(result['audio_paths'])} audio files")
-        else:
-            print("specify --audio-only, --slides-only, or --podcast. full pipeline coming soon.")
+        elif not args.full:
+            print("specify --full, --audio-only, --slides-only, or --podcast.")
             sys.exit(1)
 
     elif args.command == "voices":

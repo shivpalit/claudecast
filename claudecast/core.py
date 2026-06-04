@@ -158,6 +158,67 @@ def generate_slides(
     return result
 
 
+def generate_full(
+    source: str,
+    *,
+    project: str | None = None,
+    output_base: str | None = None,
+    slides: int | None = None,
+    voice: str | None = None,
+    aspect: str | None = None,
+    video: bool = True,
+) -> dict:
+    """
+    Full pipeline: input → scripts → PPTX + slide images + per-slide audio → MP4.
+    Returns dict with keys: scripts, pptx_path, audio_paths, image_paths, video_path, output_dir.
+    """
+    from .agents import run_script_agent
+    from .compilers.audio import generate_all as generate_all_audio
+    from .compilers.slides import generate_pptx, render_slide_images
+    from .compilers.video import build_video
+
+    cfg = resolve_config(project)
+    _slides = slides or cfg.get("default_slides", 8)
+    _voice = voice or cfg.get("default_voice", "en-US-AriaNeural")
+    _aspect = aspect or cfg.get("default_aspect", "16:9")
+    _base = output_base or cfg.get("output_dir", str(Path.home() / "claudecast-output"))
+
+    input_text = _read_input(source)
+    system_prompt = _build_system_prompt(project)
+
+    print(f"generating {_slides} scripts...")
+    scripts = run_script_agent(input_text, system_prompt, _slides)
+
+    out = _output_dir(_base, project)
+
+    print("building slides...")
+    pptx_path = str(out / "slides.pptx")
+    generate_pptx(scripts, pptx_path, _aspect)
+
+    print("rendering slide images...")
+    image_paths = render_slide_images(scripts, str(out / "images"))
+
+    print(f"generating audio ({_voice})...")
+    audio_paths = generate_all_audio(scripts, str(out / "audio"), _voice)
+
+    result: dict = {
+        "scripts": scripts,
+        "pptx_path": pptx_path,
+        "image_paths": image_paths,
+        "audio_paths": audio_paths,
+        "output_dir": str(out),
+    }
+
+    if video:
+        print("building video...")
+        video_path = str(out / "video.mp4")
+        build_video(image_paths, audio_paths, video_path)
+        result["video_path"] = video_path
+
+    (out / "manifest.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
 def generate_podcast(
     source: str,
     *,
