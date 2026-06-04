@@ -507,6 +507,7 @@ def main():
     proj_sub.add_parser("list", help="list all projects")
     proj_use = proj_sub.add_parser("use", help="set active project")
     proj_use.add_argument("name")
+    proj_sub.add_parser("deactivate", help="clear the active project")
     proj_show = proj_sub.add_parser("show", help="show project config + preferences")
     proj_show.add_argument("name", nargs="?", default=None)
     proj_set = proj_sub.add_parser("set", help="set a project config value")
@@ -557,6 +558,17 @@ def main():
             _cmd_project_create(args.name)
         elif args.project_cmd == "list":
             _cmd_project_list()
+        elif args.project_cmd == "deactivate":
+            _check_init()
+            cfg = load_config()
+            if not cfg.get("active_project"):
+                print("no active project.")
+            else:
+                prev = cfg["active_project"]
+                cfg["active_project"] = None
+                save_config(cfg)
+                print(f"deactivated project: {prev}")
+                print("outputs will go to output_dir/default/")
         elif args.project_cmd == "use":
             _cmd_project_use(args.name)
         elif args.project_cmd == "show":
