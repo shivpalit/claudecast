@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claudecast"
+version = "0.1.0"
+description = "generate narrated slide decks and videos from a prompt"
+requires-python = ">=3.11"
+dependencies = [
+    "python-pptx>=0.6",
+    "edge-tts>=6.1",
+    "moviepy>=1.0",
+    "anthropic>=0.25",
+]
+
+[project.scripts]
+claudecast = "claudecast.cli:main"
