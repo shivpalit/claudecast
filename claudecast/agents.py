@@ -49,9 +49,30 @@ def run_script_agent(
     parsed = json.loads(_extract_json(raw))
     scripts = parsed["scripts"]
 
-    # ensure correct count
     scripts = scripts[:slides]
     while len(scripts) < slides:
         scripts.append(scripts[-1] if scripts else "")
 
     return scripts
+
+
+def run_podcast_agent(
+    input_text: str,
+    system_prompt: str,
+) -> str:
+    """
+    Generate a single continuous narration from input_text.
+    Returns a single string suitable for one audio file.
+    """
+    prompt = (
+        "Write a single continuous narration from the input below.\n\n"
+        "It should flow naturally as spoken audio — no slide breaks, no bullet points, "
+        "no headings. Write it as you would speak it.\n"
+        "Return ONLY a JSON object in this exact format, no prose or markdown:\n"
+        '  {"script": "the full narration text"}\n\n'
+        f"Input:\n{input_text}"
+    )
+
+    raw = _run_claude(prompt, system_prompt or None)
+    parsed = json.loads(_extract_json(raw))
+    return parsed["script"]

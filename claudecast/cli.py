@@ -528,6 +528,7 @@ def main():
     gen_p = sub.add_parser("generate", help="generate output from input")
     gen_p.add_argument("input", help="topic string, file path, or - for stdin")
     gen_p.add_argument("--audio-only", action="store_true", help="generate audio only (no slides)")
+    gen_p.add_argument("--podcast", action="store_true", help="single continuous narration, one mp3")
     gen_p.add_argument("--slides", type=int, default=None, help="number of slides/sections")
     gen_p.add_argument("--voice", default=None, help="edge-tts voice name")
     gen_p.add_argument("--model", default=None, help="claude model id")
@@ -581,24 +582,35 @@ def main():
 
     elif args.command == "generate":
         _check_init()
-        if not args.audio_only:
-            print("only --audio-only is supported right now. full pipeline coming soon.")
-            sys.exit(1)
-        from .core import generate_audio
         project = args.project or load_config().get("active_project")
-        result = generate_audio(
-            args.input,
-            project=project,
-            output_base=args.output,
-            slides=args.slides,
-            voice=args.voice,
-            model=args.model,
-            combine=not args.no_combine,
-        )
-        print(f"\ndone. output: {result['output_dir']}")
-        if result.get("combined"):
-            print(f"  combined : {result['combined']}")
-        print(f"  {len(result['audio_paths'])} audio files")
+        if args.podcast:
+            from .core import generate_podcast
+            result = generate_podcast(
+                args.input,
+                project=project,
+                output_base=args.output,
+                voice=args.voice,
+            )
+            print(f"\ndone. output: {result['output_dir']}")
+            print(f"  podcast  : {result['audio_path']}")
+        elif args.audio_only:
+            from .core import generate_audio
+            result = generate_audio(
+                args.input,
+                project=project,
+                output_base=args.output,
+                slides=args.slides,
+                voice=args.voice,
+                model=args.model,
+                combine=not args.no_combine,
+            )
+            print(f"\ndone. output: {result['output_dir']}")
+            if result.get("combined"):
+                print(f"  combined : {result['combined']}")
+            print(f"  {len(result['audio_paths'])} audio files")
+        else:
+            print("only --audio-only and --podcast are supported right now. full pipeline coming soon.")
+            sys.exit(1)
 
     elif args.command == "voices":
         from .compilers.audio import list_voices

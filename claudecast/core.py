@@ -111,8 +111,45 @@ def generate_audio(
         combine_audio(audio_paths, combined_path)
         result["combined"] = combined_path
 
-    # save manifest
-    manifest_path = out / "manifest.json"
-    manifest_path.write_text(json.dumps(result, indent=2))
+    (out / "manifest.json").write_text(json.dumps(result, indent=2))
+    return result
 
+
+def generate_podcast(
+    source: str,
+    *,
+    project: str | None = None,
+    output_base: str | None = None,
+    voice: str | None = None,
+) -> dict:
+    """
+    Podcast pipeline: input → single narration script → one MP3.
+    Returns a dict with keys: script, audio_path, output_dir.
+    """
+    from .agents import run_podcast_agent
+    from .compilers.audio import generate_slide_audio
+
+    cfg = resolve_config(project)
+    _voice = voice or cfg.get("default_voice", "en-US-AriaNeural")
+    _base = output_base or cfg.get("output_dir", str(Path.home() / "claudecast-output"))
+
+    input_text = _read_input(source)
+    system_prompt = _build_system_prompt(project)
+
+    print("generating narration script...")
+    script = run_podcast_agent(input_text, system_prompt)
+
+    out = _output_dir(_base, project)
+    audio_path = str(out / "podcast.mp3")
+
+    print(f"generating audio ({_voice})...")
+    generate_slide_audio(script, _voice, audio_path)
+
+    result = {
+        "script": script,
+        "audio_path": audio_path,
+        "output_dir": str(out),
+    }
+
+    (out / "manifest.json").write_text(json.dumps(result, indent=2))
     return result
