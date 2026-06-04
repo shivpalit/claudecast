@@ -8,11 +8,18 @@ version = "0.1.0"
 description = "generate narrated slide decks and videos from a prompt"
 requires-python = ">=3.11"
 dependencies = [
-    "python-pptx>=0.6",
     "edge-tts>=6.1",
-    "moviepy>=1.0",
-    "anthropic>=0.25",
+    "python-pptx>=0.6",
+    "lxml>=4.9",
+    "pdfplumber>=0.9",
+    "python-docx>=1.0",
+    "pandas>=2.0",
 ]
+
+[project.optional-dependencies]
+video = ["moviepy>=1.0"]
+ai = ["anthropic>=0.25"]
+all = ["moviepy>=1.0", "anthropic>=0.25"]
 
 [project.scripts]
 claudecast = "claudecast.cli:main"
