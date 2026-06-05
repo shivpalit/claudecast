@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .config import preferences_path, resolve_config
+from .config import claudecast_dir, preferences_path, resolve_config
 
 
 def _read_input(source: str) -> str:
@@ -25,8 +25,8 @@ def _read_input(source: str) -> str:
             with pdfplumber.open(p) as pdf:
                 return "\n\n".join(page.extract_text() or "" for page in pdf.pages)
         if suffix == ".docx":
-            import docx
-            doc = docx.Document(p)
+            from docx import Document
+            doc = Document(p)
             return "\n\n".join(para.text for para in doc.paragraphs if para.text.strip())
         if suffix == ".csv":
             import pandas as pd
@@ -158,6 +158,18 @@ def generate_slides(
     return result
 
 
+def _load_template_assets(template_name: str) -> tuple[str, dict[str, str]]:
+    """Load LAYOUTS.md and example XMLs from template dir. Returns (layouts_md, example_xmls)."""
+    tdir = claudecast_dir() / "templates" / template_name
+    layouts_md = (tdir / "LAYOUTS.md").read_text() if (tdir / "LAYOUTS.md").exists() else ""
+    example_xmls = {}
+    examples_dir = tdir / "examples"
+    if examples_dir.exists():
+        for f in examples_dir.glob("*.xml"):
+            example_xmls[f.stem] = f.read_text()
+    return layouts_md, example_xmls
+
+
 def generate_full(
     source: str,
     *,
@@ -169,39 +181,83 @@ def generate_full(
     video: bool = True,
 ) -> dict:
     """
-    Full pipeline: input → scripts → PPTX + slide images + per-slide audio → MP4.
-    Returns dict with keys: scripts, pptx_path, audio_paths, image_paths, video_path, output_dir.
+    Full sequential pipeline:
+      outline → analysis (per slide) → ooxml (per slide) → script (per slide)
+      → inject pptx → render images → audio → video
+
+    Returns dict with all artifact paths + intermediate data.
     """
-    from .agents import run_script_agent
+    from .agents import run_analysis_agent, run_outline_agent, run_ooxml_agent, run_script_agent_v2
     from .compilers.audio import generate_all as generate_all_audio
-    from .compilers.slides import generate_pptx, render_slide_images
+    from .compilers.slides import render_slide_images
     from .compilers.video import build_video
 
     cfg = resolve_config(project)
     _slides = slides or cfg.get("default_slides", 8)
     _voice = voice or cfg.get("default_voice", "en-US-AriaNeural")
     _aspect = aspect or cfg.get("default_aspect", "16:9")
+    _template = cfg.get("active_template", "default")
     _base = output_base or cfg.get("output_dir", str(Path.home() / "claudecast-output"))
 
     input_text = _read_input(source)
     system_prompt = _build_system_prompt(project)
-
-    print(f"generating {_slides} scripts...")
-    scripts = run_script_agent(input_text, system_prompt, _slides)
+    layouts_md, example_xmls = _load_template_assets(_template)
 
     out = _output_dir(_base, project)
 
-    print("building slides...")
-    pptx_path = str(out / "slides.pptx")
-    generate_pptx(scripts, pptx_path, _aspect)
+    # Stage 1: outline
+    print(f"[1/4] generating outline ({_slides} slides)...")
+    outline = run_outline_agent(input_text, system_prompt, _slides)
+    (out / "outline.json").write_text(json.dumps(outline, indent=2))
 
+    # Stages 2-4: per-slide, context builds
+    slide_specs = []
+    ooxml_strings = []
+    scripts = []
+
+    for slide in outline["slides"]:
+        i = slide["index"]
+        n = len(outline["slides"])
+
+        print(f"[2/4] analyzing slide {i}/{n}...")
+        spec = run_analysis_agent(slide, outline, input_text, system_prompt)
+        slide_specs.append(spec)
+
+        print(f"[3/4] generating ooxml for slide {i}/{n}...")
+        ooxml = run_ooxml_agent(spec, layouts_md, example_xmls, system_prompt)
+        ooxml_strings.append(ooxml)
+
+        print(f"[4/4] writing script for slide {i}/{n}...")
+        script = run_script_agent_v2(spec, ooxml, system_prompt)
+        scripts.append(script)
+
+    (out / "slide_specs.json").write_text(json.dumps(slide_specs, indent=2))
+
+    # inject OOXML into template → pptx
+    print("building pptx...")
+    template_pptx = str(claudecast_dir() / "templates" / _template / "start.pptx")
+    pptx_path = str(out / "slides.pptx")
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        from inject_slides import inject_slides
+        inject_slides(ooxml_strings, template_pptx, pptx_path)
+    except Exception as e:
+        print(f"  inject_slides failed ({e}), falling back to python-pptx")
+        from .compilers.slides import generate_pptx
+        generate_pptx(scripts, pptx_path, _aspect)
+
+    # render slide images
     print("rendering slide images...")
     image_paths = render_slide_images(scripts, str(out / "images"))
 
+    # audio
     print(f"generating audio ({_voice})...")
     audio_paths = generate_all_audio(scripts, str(out / "audio"), _voice)
 
     result: dict = {
+        "outline": outline,
+        "slide_specs": slide_specs,
         "scripts": scripts,
         "pptx_path": pptx_path,
         "image_paths": image_paths,
