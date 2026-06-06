@@ -550,6 +550,14 @@ def main():
     gen_p.add_argument("--project", default=None, help="project name (overrides active)")
     gen_p.add_argument("--no-combine", action="store_true", help="skip combined.mp3")
 
+    # ingest
+    ingest_p = sub.add_parser("ingest", help="ingest assets into claudecast")
+    ingest_sub = ingest_p.add_subparsers(dest="ingest_cmd", required=True)
+    ingest_tpl = ingest_sub.add_parser("template", help="ingest a pptx as a template")
+    ingest_tpl.add_argument("pptx", help="path to .pptx file")
+    ingest_tpl.add_argument("--name", default="default", help="template name (default: default)")
+    ingest_tpl.add_argument("--interactive", action="store_true", help="interactively name each slide layout")
+
     # voices
     voices_p = sub.add_parser("voices", help="list available tts voices")
     voices_p.add_argument("--lang", default=None, help="filter by locale prefix e.g. en-US")
@@ -650,6 +658,17 @@ def main():
         elif not args.full:
             print("specify --full, --audio-only, --slides-only, or --podcast.")
             sys.exit(1)
+
+    elif args.command == "ingest":
+        _check_init()
+        if args.ingest_cmd == "template":
+            import sys as _sys
+            _sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+            from parse_pptx import ingest
+            out_dir = ingest(args.pptx, args.name, interactive=args.interactive)
+            cfg = load_config()
+            if cfg.get("active_template") != args.name:
+                print(f"\nto use this template: claudecast config set active_template {args.name}")
 
     elif args.command == "voices":
         from .compilers.audio import list_voices
