@@ -1,13 +1,12 @@
 """
-Claude agents — sequential pipeline stages, each builds on prior context.
-
-Pipeline: outline → analysis (per slide) → ooxml (per slide) → script (per slide)
+Claude agents — generation pipeline stages.
 """
 
 import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _run_claude(prompt: str, system_prompt: str | None = None) -> str:
@@ -25,182 +24,102 @@ def _parse_json(raw: str) -> dict | list:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # try to extract first JSON object or array
         match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw)
         if match:
             return json.loads(match.group(0))
         raise ValueError(f"no valid JSON found in response:\n{raw[:500]}")
 
 
-def _extract_xml(raw: str) -> str:
-    """Pull the <p:sld ...>...</p:sld> block out of a response."""
-    match = re.search(r'<p:sld[\s\S]*?</p:sld>', raw)
-    if match:
-        return match.group(0)
-    # fallback: strip markdown fences
-    raw = re.sub(r'```xml\s*', '', raw)
-    raw = re.sub(r'```\s*', '', raw)
-    return raw.strip()
+def _find_pptx_plugin_dir() -> str | None:
+    import glob
+    matches = glob.glob("/root/.claude/remote/plugins/*/skills/pptx")
+    if matches:
+        return matches[0].replace("/skills/pptx", "")
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Stage 1: Outline
-# ---------------------------------------------------------------------------
-
-def run_outline_agent(
+def run_slide_agent(
     input_text: str,
+    output_dir: str,
     system_prompt: str,
-    slides: int,
+    slide_count: int | None = None,
 ) -> dict:
     """
-    Input → high-level deck outline.
-    Returns: {title, slides: [{index, title, purpose, content_hint}]}
+    Runs claude -p to generate a PPTX. Claude decides layout and design.
+    Writes slides.pptx and slides.json to output_dir.
+    Returns parsed slide JSON: {slides: [{index, title, content, details}], pptx_path}
     """
+    pptx_path = str(Path(output_dir) / "slides.pptx")
+    json_path = str(Path(output_dir) / "slides.json")
+
+    slide_instruction = (
+        f"The deck should have exactly {slide_count} slides."
+        if slide_count
+        else "Decide how many slides best suits the content."
+    )
+
     prompt = (
-        f"Analyze the input and create a {slides}-slide presentation outline.\n\n"
-        f"Return ONLY valid JSON, no prose:\n"
+        f"Generate a PowerPoint presentation and save it to: {pptx_path}\n\n"
+        f"{slide_instruction}\n\n"
+        f"After saving the PPTX, write a JSON file to: {json_path}\n"
+        f"The JSON must have this exact structure:\n"
         f'{{\n'
-        f'  "title": "presentation title",\n'
         f'  "slides": [\n'
         f'    {{\n'
         f'      "index": 1,\n'
         f'      "title": "slide title",\n'
-        f'      "purpose": "what this slide accomplishes in the overall narrative",\n'
-        f'      "content_hint": "what specific data, facts, or content belongs here"\n'
+        f'      "content": "text and bullets visible on the slide",\n'
+        f'      "details": "additional context, data, or nuance not shown on the slide — used for voiceover"\n'
         f'    }}\n'
         f'  ]\n'
         f'}}\n\n'
         f"Input:\n{input_text}"
     )
-    raw = _run_claude(prompt, system_prompt or None)
-    return _parse_json(raw)
 
+    cmd = ["claude", "-p", prompt, "--allowedTools", "Bash,Write,Read"]
 
-# ---------------------------------------------------------------------------
-# Stage 2: Analysis (per slide)
-# ---------------------------------------------------------------------------
+    plugin_dir = _find_pptx_plugin_dir()
+    if plugin_dir:
+        cmd += ["--plugin-dir", plugin_dir]
 
-def run_analysis_agent(
-    slide: dict,
-    outline: dict,
-    input_text: str,
-    system_prompt: str,
-) -> dict:
-    """
-    Per slide: decides layout and extracts exact content from source data.
-    Returns slide spec: {index, title, layout, content: {bullets?, table?, takeaway}}
-    """
-    n = len(outline["slides"])
-    prompt = (
-        f"You are analyzing content for slide {slide['index']} of {n} "
-        f"in a presentation titled \"{outline['title']}\".\n\n"
-        f"Slide purpose: {slide['purpose']}\n"
-        f"Content hint: {slide['content_hint']}\n\n"
-        f"Decide exactly what goes on this slide:\n"
-        f"- Choose the best layout: bullets, table, section, or blank\n"
-        f"- If table: extract the exact rows and columns from the source data\n"
-        f"- If bullets: extract the key points (max 5 bullets)\n"
-        f"- Identify the single most important takeaway\n\n"
-        f"Return ONLY valid JSON:\n"
-        f'{{\n'
-        f'  "index": {slide["index"]},\n'
-        f'  "title": "slide title",\n'
-        f'  "layout": "bullets|table|section|blank",\n'
-        f'  "content": {{\n'
-        f'    "bullets": ["point 1", "point 2"],\n'
-        f'    "table": {{"headers": ["col1", "col2"], "rows": [["val", "val"]]}},\n'
-        f'    "takeaway": "the single key message"\n'
-        f'  }}\n'
-        f'}}\n\n'
-        f"Full deck outline (for narrative context):\n"
-        f"{json.dumps(outline, indent=2)}\n\n"
-        f"Source data:\n{input_text}"
-    )
-    raw = _run_claude(prompt, system_prompt or None)
-    return _parse_json(raw)
+    if system_prompt:
+        cmd += ["--system-prompt", system_prompt]
 
+    print("generating slides...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        raise RuntimeError(f"slide agent exited with code {result.returncode}")
 
-# ---------------------------------------------------------------------------
-# Stage 3: OOXML generation (per slide)
-# ---------------------------------------------------------------------------
+    json_file = Path(json_path)
+    if not json_file.exists():
+        raise RuntimeError(f"slide agent did not produce slides.json at {json_path}")
 
-def run_ooxml_agent(
-    slide_spec: dict,
-    layouts_md: str,
-    example_xmls: dict[str, str],
-    system_prompt: str,
-) -> str:
-    """
-    Per slide: generates raw OOXML from slide spec + template examples.
-    Returns a complete <p:sld>...</p:sld> XML string.
-    """
-    layout = slide_spec.get("layout", "bullets")
-    example = example_xmls.get(layout) or example_xmls.get("bullets") or ""
+    data = _parse_json(json_file.read_text())
+    data["pptx_path"] = pptx_path
+    return data
 
-    prompt = (
-        f"Generate valid OOXML for a single PowerPoint slide.\n\n"
-        f"Slide spec:\n{json.dumps(slide_spec, indent=2)}\n\n"
-        f"Layout to use: {layout}\n\n"
-        f"Reference example XML for this layout (adapt, don't copy verbatim):\n"
-        f"{example}\n\n"
-        f"Layout and OOXML rules:\n{layouts_md}\n\n"
-        f"Return ONLY the raw XML — the complete <p:sld> element and its children. "
-        f"No prose, no markdown fences, no explanation."
-    )
-    raw = _run_claude(prompt, system_prompt or None)
-    return _extract_xml(raw)
-
-
-# ---------------------------------------------------------------------------
-# Stage 4: Script (per slide)
-# ---------------------------------------------------------------------------
-
-def run_script_agent_v2(
-    slide_spec: dict,
-    ooxml: str,
-    system_prompt: str,
-) -> str:
-    """
-    Per slide: writes spoken narration knowing exactly what's on screen.
-    Returns a single narration string.
-    """
-    prompt = (
-        f"Write spoken narration for this slide. "
-        f"The audience is looking at it right now.\n\n"
-        f"Slide spec:\n{json.dumps(slide_spec, indent=2)}\n\n"
-        f"Actual slide XML (what's visually on screen):\n{ooxml}\n\n"
-        f"Write 2-4 sentences of natural spoken narration. "
-        f"Don't read bullets aloud — explain, connect, give context. "
-        f"Reference what the viewer sees.\n\n"
-        f'Return ONLY JSON: {{"script": "narration text"}}'
-    )
-    raw = _run_claude(prompt, system_prompt or None)
-    return _parse_json(raw)["script"]
-
-
-# ---------------------------------------------------------------------------
-# Standalone agents (audio-only / podcast — no slide context needed)
-# ---------------------------------------------------------------------------
 
 def run_script_agent(
-    input_text: str,
+    slides: list[dict],
     system_prompt: str,
-    slides: int,
 ) -> list[str]:
-    """Simple per-slide scripts without full pipeline. Used by audio-only mode."""
+    """
+    Takes slide JSON from slide agent, generates per-slide voiceover narration.
+    Returns list of narration strings in slide order.
+    """
     prompt = (
-        f"Generate exactly {slides} narration scripts from the input below.\n\n"
-        f"Each script is a short paragraph (2-4 sentences) to be read aloud for one slide.\n"
-        f'Return ONLY JSON: {{"scripts": ["script 1", "script 2", ...]}}\n\n'
-        f"Input:\n{input_text}"
+        f"You are writing spoken voiceover narration for a presentation.\n\n"
+        f"For each slide below, write 2-4 sentences of natural spoken narration. "
+        f"Do NOT read the slide text aloud — interpret, connect, and add context. "
+        f"Use the 'details' field for additional depth.\n\n"
+        f"Return ONLY valid JSON:\n"
+        f'{{"scripts": ["narration for slide 1", "narration for slide 2", ...]}}\n\n'
+        f"Slides:\n{json.dumps(slides, indent=2)}"
     )
     raw = _run_claude(prompt, system_prompt or None)
     parsed = _parse_json(raw)
-    scripts = parsed["scripts"]
-    scripts = scripts[:slides]
-    while len(scripts) < slides:
-        scripts.append(scripts[-1] if scripts else "")
-    return scripts
+    return parsed["scripts"]
 
 
 def run_podcast_agent(

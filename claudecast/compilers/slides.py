@@ -1,93 +1,84 @@
 """
-Slides compiler — generates PPTX from narration scripts.
+Slides compiler — renders slide images from PPTX.
 
-Today: uses python-pptx directly as a placeholder.
-Eventually: agent generates OOXML per slide → inject_slides wires into template.
+Primary: pptxtoimages (LibreOffice + poppler) — requires system deps.
+Fallback: python-pptx + Pillow — lower quality but no system deps.
 """
 
 from pathlib import Path
 
-
-def generate_pptx(
-    scripts: list[str],
-    output_path: str,
-    aspect: str = "16:9",
-) -> str:
-    """
-    Generate a PPTX from a list of narration scripts.
-    One slide per script — title extracted from first sentence, rest as body.
-    Returns output_path.
-    """
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-
-    prs = Presentation()
-    if aspect == "16:9":
-        prs.slide_width = Inches(13.33)
-        prs.slide_height = Inches(7.5)
-    else:
-        prs.slide_width = Inches(10)
-        prs.slide_height = Inches(7.5)
-
-    layout = prs.slide_layouts[1]  # Title and Content
-
-    for script in scripts:
-        sentences = [s.strip() for s in script.split(".") if s.strip()]
-        title = sentences[0] if sentences else "Slide"
-        body = ". ".join(sentences[1:]).strip() if len(sentences) > 1 else script
-
-        slide = prs.slides.add_slide(layout)
-        slide.shapes.title.text = title
-        try:
-            slide.placeholders[1].text = body
-        except KeyError:
-            pass
-
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    prs.save(output_path)
-    return output_path
+EMU_PER_INCH = 914400
 
 
 def render_slide_images(
-    scripts: list[str],
+    pptx_path: str,
     output_dir: str,
     width: int = 1280,
-    height: int = 720,
 ) -> list[str]:
     """
-    Render basic slide images from scripts using Pillow.
-    Placeholder until LibreOffice rendering is in place.
-    Returns list of PNG paths.
+    Render slides from a PPTX to PNG images.
+    Uses pptxtoimages (LibreOffice) if available, falls back to python-pptx + Pillow.
+    Returns list of image paths in slide order.
     """
-    from PIL import Image, ImageDraw, ImageFont
-
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+
+    try:
+        return _render_libreoffice(pptx_path, str(out))
+    except Exception as e:
+        print(f"  pptxtoimages unavailable ({e}), falling back to python-pptx renderer")
+        return _render_pillow(pptx_path, str(out), width)
+
+
+def _render_libreoffice(pptx_path: str, output_dir: str) -> list[str]:
+    from pptxtoimages.tools import PPTXToImageConverter
+    converter = PPTXToImageConverter(pptx_path, output_dir=output_dir)
+    images = converter.convert()
+    return sorted(str(p) for p in images)
+
+
+def _render_pillow(pptx_path: str, output_dir: str, width: int) -> list[str]:
+    from PIL import Image, ImageDraw
+    from pptx import Presentation
+
+    prs = Presentation(pptx_path)
+    out = Path(output_dir)
+    scale = width / prs.slide_width
+    height = int(prs.slide_height * scale)
+
     paths = []
-
-    for i, script in enumerate(scripts, start=1):
-        sentences = [s.strip() for s in script.split(".") if s.strip()]
-        title = sentences[0] if sentences else f"Slide {i}"
-        body = ". ".join(sentences[1:]).strip() if len(sentences) > 1 else ""
-
-        img = Image.new("RGB", (width, height), color=(255, 255, 255))
+    for i, slide in enumerate(prs.slides, start=1):
+        bg = _get_slide_bg(slide)
+        img = Image.new("RGB", (width, height), color=bg)
         draw = ImageDraw.Draw(img)
 
-        try:
-            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
-            body_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
-        except OSError:
-            title_font = ImageFont.load_default()
-            body_font = ImageFont.load_default()
+        for shape in slide.shapes:
+            fill = _get_fill_color(shape)
+            if fill:
+                x, y, w, h = _shape_rect(shape, scale)
+                draw.rectangle([x, y, x + w, y + h], fill=fill)
 
-        # title
-        draw.text((80, 100), title, fill=(30, 30, 30), font=title_font)
-        # divider
-        draw.line([(80, 180), (width - 80, 180)], fill=(200, 200, 200), width=2)
-        # body — wrap text
-        _draw_wrapped(draw, body, body_font, x=80, y=210, max_width=width - 160, fill=(80, 80, 80))
-        # slide number
-        draw.text((width - 60, height - 40), str(i), fill=(180, 180, 180), font=body_font)
+            if not shape.has_text_frame:
+                continue
+
+            x, y, w, h = _shape_rect(shape, scale)
+            pad = int(width * 0.01)
+            cy = y + pad
+            text_default = (0, 0, 0) if sum(bg) > 382 else (255, 255, 255)
+
+            for para in shape.text_frame.paragraphs:
+                if not para.text.strip():
+                    cy += int(height * 0.01)
+                    continue
+                bold, size_pt, color = _para_style(para, text_default)
+                font = _load_font(bold, size_pt * scale * 72 / 96)
+                line_h = int(size_pt * scale * 72 / 96 * 1.3)
+                for line in _wrap(draw, para.text, font, w - pad * 2):
+                    if cy + line_h > y + h:
+                        break
+                    draw.text((x + pad, cy), line, fill=color, font=font)
+                    cy += line_h
+                cy += int(line_h * 0.2)
 
         path = str(out / f"slide_{i:02d}.png")
         img.save(path)
@@ -96,17 +87,100 @@ def render_slide_images(
     return paths
 
 
-def _draw_wrapped(draw, text: str, font, x: int, y: int, max_width: int, fill, line_height: int = 40):
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _emu_px(emu: int, scale: float) -> int:
+    return int(emu * scale)
+
+
+def _shape_rect(shape, scale: float) -> tuple[int, int, int, int]:
+    return (
+        _emu_px(shape.left, scale),
+        _emu_px(shape.top, scale),
+        _emu_px(shape.width, scale),
+        _emu_px(shape.height, scale),
+    )
+
+
+def _get_rgb(color) -> tuple[int, int, int] | None:
+    try:
+        if color and color.type is not None:
+            rgb = color.rgb
+            return (rgb.red, rgb.green, rgb.blue)
+    except Exception:
+        pass
+    return None
+
+
+def _get_fill_color(shape) -> tuple[int, int, int] | None:
+    try:
+        fill = shape.fill
+        if fill.type is not None:
+            return _get_rgb(fill.fore_color)
+    except Exception:
+        pass
+    return None
+
+
+def _get_slide_bg(slide) -> tuple[int, int, int]:
+    try:
+        fill = slide.background.fill
+        if fill.type is not None:
+            rgb = _get_rgb(fill.fore_color)
+            if rgb:
+                return rgb
+    except Exception:
+        pass
+    return (255, 255, 255)
+
+
+def _para_style(para, default_color) -> tuple[bool, float, tuple]:
+    bold, size_pt, color = False, 18.0, default_color
+    if para.runs:
+        run = para.runs[0]
+        bold = run.font.bold or False
+        if run.font.size:
+            size_pt = run.font.size / 12700
+        rc = _get_rgb(run.font.color) if run.font.color else None
+        if rc:
+            color = rc
+    return bold, size_pt, color
+
+
+def _load_font(bold: bool, size_pt: float):
+    from PIL import ImageFont
+    size = max(8, int(size_pt))
+    candidates = (
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ]
+        if bold else
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
+    )
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _wrap(draw, text: str, font, max_width: int) -> list[str]:
     words = text.split()
-    line = ""
+    lines, line = [], ""
     for word in words:
         test = f"{line} {word}".strip()
-        bbox = draw.textbbox((0, 0), test, font=font)
-        if bbox[2] > max_width and line:
-            draw.text((x, y), line, fill=fill, font=font)
-            y += line_height
+        if draw.textbbox((0, 0), test, font=font)[2] > max_width and line:
+            lines.append(line)
             line = word
         else:
             line = test
     if line:
-        draw.text((x, y), line, fill=fill, font=font)
+        lines.append(line)
+    return lines

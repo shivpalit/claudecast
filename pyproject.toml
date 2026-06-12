@@ -18,9 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-video = ["moviepy>=1.0", "imageio-ffmpeg>=0.4"]
+video = ["moviepy>=1.0", "imageio-ffmpeg>=0.4", "pptxtoimages>=0.1"]
 ai = ["anthropic>=0.25"]
-all = ["moviepy>=1.0", "imageio-ffmpeg>=0.4", "anthropic>=0.25"]
+all = ["moviepy>=1.0", "imageio-ffmpeg>=0.4", "anthropic>=0.25", "pptxtoimages>=0.1"]
 
 [project.scripts]
 claudecast = "claudecast.cli:main"

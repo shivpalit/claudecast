@@ -121,8 +121,6 @@ def _cmd_config_set(key: str, value: str):
         sys.exit(1)
     cfg = load_config()
     # coerce numeric fields
-    if key in ("default_slides",):
-        value = int(value)
     cfg[key] = value
     save_config(cfg)
     print(f"set {key} = {value}")
@@ -133,10 +131,8 @@ def _cmd_config_set(key: str, value: str):
 # ---------------------------------------------------------------------------
 
 _PROJECT_SETUP_KEYS = [
-    ("default_slides",  "slides per deck",          int),
     ("default_voice",   "tts voice",                str),
     ("default_model",   "claude model",             str),
-    ("default_aspect",  "slide aspect ratio",       str),
     ("output_dir",      "output directory",         str),
 ]
 
@@ -242,8 +238,6 @@ def _cmd_project_set(key: str, value: str, project: str | None):
         print(f"valid keys: {', '.join(sorted(VALID_CONFIG_KEYS))}")
         sys.exit(1)
     cfg = load_project_config(name)
-    if key in ("default_slides",):
-        value = int(value)
     cfg[key] = value
     save_project_config(name, cfg)
     print(f"[{name}] set {key} = {value}")
@@ -338,8 +332,7 @@ Generate narrated slide decks and videos from a prompt, file, or data input.
 
 ## Before generating — read these files
 
-- `~/.claudecast/config.json` — active template, active project, defaults
-- `~/.claudecast/templates/{{active_template}}/LAYOUTS.md` — available layouts + OOXML rules
+- `~/.claudecast/config.json` — active project, defaults
 - `~/.claudecast/style/preferences.md` — global style instructions
 - `~/.claudecast/projects/{{active_project}}/preferences.md` — project preferences (if set)
 - `~/.claudecast/projects/{{active_project}}/config.json` — project config overrides
@@ -358,8 +351,6 @@ Always read the live files above before generating — never assume defaults.
 ```
 {cmd} config show
 {cmd} config set default_voice en-US-GuyNeural
-{cmd} config set default_slides 8
-{cmd} config set active_template custom
 {cmd} config set active_project morning-briefing
 {cmd} config set output_dir ~/Presentations
 ```
@@ -371,7 +362,6 @@ Always read the live files above before generating — never assume defaults.
 {cmd} project use morning-briefing
 {cmd} project deactivate
 {cmd} project show [NAME]
-{cmd} project set default_slides 5
 {cmd} project set default_voice en-US-GuyNeural --project morning-briefing
 ```
 
@@ -387,26 +377,27 @@ Always read the live files above before generating — never assume defaults.
 
 **Generation**
 ```
-# per-slide audio (N mp3s + combined.mp3)
-{cmd} generate "topic" --audio-only
-{cmd} generate notes.txt --audio-only --slides 5 --voice en-US-GuyNeural
-{cmd} generate data.csv --audio-only --project morning-briefing
-{cmd} generate - --audio-only            # read from stdin
-{cmd} generate "topic" --audio-only --no-combine
+# slides only — generates PPTX
+{cmd} generate "topic" --mode slides
+{cmd} generate notes.txt --mode slides --slide-count 6
+{cmd} generate - --mode slides --output ~/out/
 
-# podcast (single continuous narration → one mp3)
-{cmd} generate "topic" --podcast
-{cmd} generate article.pdf --podcast --voice en-US-AriaNeural
-{cmd} generate - --podcast --output ~/out/
+# video — slides + voiceover audio
+{cmd} generate "topic" --mode video
+{cmd} generate notes.txt --mode video --slide-count 6 --voice en-US-GuyNeural
+{cmd} generate data.csv --mode video --project morning-briefing
+
+# podcast — single continuous narration, one mp3
+{cmd} generate "topic" --mode podcast
+{cmd} generate article.pdf --mode podcast --voice en-US-AriaNeural
+{cmd} generate - --mode podcast --output ~/out/
 
 # shared flags
-# --slides N        number of slides (audio-only)
+# --slide-count N   number of slides (slides/video modes); omit to let Claude decide
 # --voice NAME      edge-tts voice
 # --output DIR      override output directory
 # --project NAME    override active project
 ```
-
-PPTX + video pipeline coming soon.
 
 **Voices**
 ```
@@ -417,20 +408,13 @@ PPTX + video pipeline coming soon.
 
 ```
 ~/.claudecast/
-├── config.json                    # global defaults + active template/project
+├── config.json                    # global defaults + active project
 ├── style/preferences.md           # global style — prepended to every Claude call
-├── templates/
-│   ├── default/
-│   │   ├── start.pptx             # base deck (theme + masters only)
-│   │   ├── examples/*.xml         # named example slide XMLs
-│   │   └── LAYOUTS.md             # layout catalog + OOXML rules
-│   └── custom/                    # from claudecast ingest template
 ├── projects/
 │   └── {{name}}/
 │       ├── config.json            # overrides global config for this project
 │       ├── preferences.md         # appended after global preferences
 │       └── history/               # past runs
-└── agents/                        # optional system prompt overrides
 ```
 """
 
@@ -539,24 +523,11 @@ def main():
     # generate
     gen_p = sub.add_parser("generate", help="generate output from input")
     gen_p.add_argument("input", help="topic string, file path, or - for stdin")
-    gen_p.add_argument("--full", action="store_true", help="full pipeline: pptx + audio + video")
-    gen_p.add_argument("--audio-only", action="store_true", help="generate audio only (no slides)")
-    gen_p.add_argument("--slides-only", action="store_true", help="generate pptx only (no audio)")
-    gen_p.add_argument("--podcast", action="store_true", help="single continuous narration, one mp3")
-    gen_p.add_argument("--slides", type=int, default=None, help="number of slides/sections")
+    gen_p.add_argument("--mode", required=True, choices=["podcast", "slides", "video"], help="generation mode")
+    gen_p.add_argument("--slide-count", type=int, default=None, help="number of slides (slides/video modes); omit to let Claude decide")
     gen_p.add_argument("--voice", default=None, help="edge-tts voice name")
-    gen_p.add_argument("--model", default=None, help="claude model id")
     gen_p.add_argument("--output", default=None, help="output directory")
     gen_p.add_argument("--project", default=None, help="project name (overrides active)")
-    gen_p.add_argument("--no-combine", action="store_true", help="skip combined.mp3")
-
-    # ingest
-    ingest_p = sub.add_parser("ingest", help="ingest assets into claudecast")
-    ingest_sub = ingest_p.add_subparsers(dest="ingest_cmd", required=True)
-    ingest_tpl = ingest_sub.add_parser("template", help="ingest a pptx as a template")
-    ingest_tpl.add_argument("pptx", help="path to .pptx file")
-    ingest_tpl.add_argument("--name", default="default", help="template name (default: default)")
-    ingest_tpl.add_argument("--interactive", action="store_true", help="interactively name each slide layout")
 
     # voices
     voices_p = sub.add_parser("voices", help="list available tts voices")
@@ -605,7 +576,7 @@ def main():
     elif args.command == "generate":
         _check_init()
         project = args.project or load_config().get("active_project")
-        if args.podcast:
+        if args.mode == "podcast":
             from .core import generate_podcast
             result = generate_podcast(
                 args.input,
@@ -614,61 +585,31 @@ def main():
                 voice=args.voice,
             )
             print(f"\ndone. output: {result['output_dir']}")
-            print(f"  podcast  : {result['audio_path']}")
-        if args.full:
-            from .core import generate_full
-            result = generate_full(
-                args.input,
-                project=project,
-                output_base=args.output,
-                slides=args.slides,
-                voice=args.voice,
-            )
-            print(f"\ndone. output: {result['output_dir']}")
-            print(f"  pptx  : {result['pptx_path']}")
-            if result.get("video_path"):
-                print(f"  video : {result['video_path']}")
-            print(f"  {len(result['audio_paths'])} audio files")
-        elif args.slides_only:
+            print(f"  podcast : {result['audio_path']}")
+        elif args.mode == "slides":
             from .core import generate_slides
             result = generate_slides(
                 args.input,
                 project=project,
                 output_base=args.output,
-                slides=args.slides,
-                model=args.model,
+                slide_count=args.slide_count,
             )
             print(f"\ndone. output: {result['output_dir']}")
-            print(f"  pptx : {result['pptx_path']}")
-        elif args.audio_only:
-            from .core import generate_audio
-            result = generate_audio(
+            print(f"  pptx    : {result['pptx_path']}")
+        elif args.mode == "video":
+            from .core import generate_video
+            result = generate_video(
                 args.input,
                 project=project,
                 output_base=args.output,
-                slides=args.slides,
+                slide_count=args.slide_count,
                 voice=args.voice,
-                model=args.model,
-                combine=not args.no_combine,
             )
             print(f"\ndone. output: {result['output_dir']}")
-            if result.get("combined"):
-                print(f"  combined : {result['combined']}")
+            print(f"  pptx    : {result['pptx_path']}")
+            print(f"  video   : {result['video_path']}")
+            print(f"  combined: {result['combined']}")
             print(f"  {len(result['audio_paths'])} audio files")
-        elif not args.full:
-            print("specify --full, --audio-only, --slides-only, or --podcast.")
-            sys.exit(1)
-
-    elif args.command == "ingest":
-        _check_init()
-        if args.ingest_cmd == "template":
-            import sys as _sys
-            _sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-            from parse_pptx import ingest
-            out_dir = ingest(args.pptx, args.name, interactive=args.interactive)
-            cfg = load_config()
-            if cfg.get("active_template") != args.name:
-                print(f"\nto use this template: claudecast config set active_template {args.name}")
 
     elif args.command == "voices":
         from .compilers.audio import list_voices

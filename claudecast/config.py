@@ -4,12 +4,9 @@ from pathlib import Path
 CLAUDECAST_DIR = Path.home() / ".claudecast"
 
 DEFAULT_CONFIG = {
-    "active_template": "default",
     "active_project": None,
     "default_voice": "en-US-AriaNeural",
-    "default_slides": 8,
     "default_model": "claude-sonnet-4-6",
-    "default_aspect": "16:9",
     "output_dir": str(Path.home() / "claudecast-output"),
 }
 
@@ -69,10 +66,6 @@ def preferences_path(project: str | None = None) -> Path:
     if project:
         return project_dir(project) / "preferences.md"
     return CLAUDECAST_DIR / "style" / "preferences.md"
-
-
-def template_dir(name: str = "default") -> Path:
-    return CLAUDECAST_DIR / "templates" / name
 
 
 def resolve_config(project: str | None = None) -> dict:
